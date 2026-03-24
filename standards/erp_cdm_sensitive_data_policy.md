@@ -1,167 +1,69 @@
-# ERP-to-CDM Sensitive Data Policy
+# Sensitive Data Policy — Retail Engagement Data
 
-> **For AI Agents:** Apply these rules whenever creating or reviewing tables that contain financial, personal, or commercially sensitive data from audited entity ERP systems. These standards ensure compliance with engagement confidentiality obligations and data protection regulations (GDPR, CCPA, local equivalents).
-
----
-
-## Quick Reference — Sensitivity Classification
-
-| Classification | Examples | Required Action |
-|---------------|---------|-----------------|
-| RESTRICTED | TINs, bank accounts, payroll amounts, board-level compensation | Masking mandatory; no Gold exposure |
-| CONFIDENTIAL | GL account codes, vendor names, employee IDs, contract values | Column tagging mandatory |
-| INTERNAL | Cost centres, profit centres, GL descriptions | Standard access control sufficient |
-| PUBLIC | Currency codes, date dimensions, standardised CDM codes | No special handling |
+> **For AI Agents:** Apply these rules when creating tables that contain personally identifiable information (PII) or commercially sensitive retail data.
 
 ---
 
-## 1. Financial Data Sensitivity Types
+## Quick Reference
 
-### Tier 1 — RESTRICTED (Highest Sensitivity)
+| Requirement | How to Apply |
+|-------------|--------------|
+| Table label | Add `TBLPROPERTIES ("contains_pii" = "true")` |
+| Table comment | Include `[CONTAINS PII]` prefix |
+| Column comment | Add `[PII: <type>]` prefix to sensitive columns |
 
-| Data Type | UC Tag | ERP Source Fields | Handling |
-|-----------|--------|-------------------|---------|
-| Tax Identification Number (TIN/VAT) | `class.tax_id` | SAP: `STCEG`, Oracle: `TAX_REGISTRATION_NUMBER` | Mask to last 4 digits only |
-| Bank account number | `class.bank_account` | SAP: `BANKN`, Oracle: `BANK_ACCOUNT_NUM` | Tokenise; never expose in Gold |
-| Sort code / routing number | `class.bank_routing` | SAP: `BANKL`, Oracle: `ROUTING_NUM` | Tokenise |
-| Payroll amount | `class.compensation` | SAP: `LGART`/`BETRG`, Oracle: `PAY_VALUE` | Aggregate only in Gold; no individual rows |
-| Senior executive compensation | `class.executive_comp` | HR tables | Exclude from pipeline entirely; manual process |
-| Audited entity board minutes references | `class.board_data` | Any source | Do not ingest; flag for manual review |
+---
 
-### Tier 2 — CONFIDENTIAL
+## 1. PII Classification
 
-| Data Type | UC Tag | Handling |
-|-----------|--------|---------|
-| Vendor / supplier name | `class.vendor_name` | Tag column; restrict Gold access by role |
-| Employee name | `class.employee_name` | Tag column; mask in Gold aggregations |
-| Employee ID | `class.employee_id` | Tag column; hash in Gold |
-| Contract / PO value | `class.contract_value` | Tag column; aggregate only in Gold |
-| GL account description | `class.gl_description` | Tag column; include in Silver, aggregate in Gold |
-| Profit centre description | `class.cost_centre_desc` | Tag column |
+| PII Type | Risk | Examples | Action |
+|----------|------|---------|--------|
+| `CUSTOMER_ID` | LOW | Loyalty card number, member ID | Tag column |
+| `EMAIL` | HIGH | Customer email address | Mask in Gold |
+| `PHONE` | HIGH | Mobile, landline | Mask in Gold |
+| `NAME` | MEDIUM | First name, last name | Mask in Gold |
+| `ADDRESS` | MEDIUM | Street, postcode | Mask in Gold |
+| `PAYMENT` | CRITICAL | Card numbers, bank details | Never ingest; flag for exclusion |
 
 ---
 
 ## 2. PII Detection Patterns
 
-**For AI Agents:** When reviewing column names in ERP extract schemas, automatically classify the following patterns:
-
-| Column Name Pattern | Sensitivity | Action |
-|--------------------|-------------|--------|
-| `*tin*`, `*vat*`, `*tax_reg*` | RESTRICTED | Apply masking + UC tag |
-| `*bank_account*`, `*iban*`, `*sort_code*` | RESTRICTED | Tokenise + UC tag |
-| `*salary*`, `*wage*`, `*compensation*`, `*payroll*` | RESTRICTED | Aggregate only; no row-level Gold |
-| `*employee_name*`, `*emp_name*`, `*staff_name*` | CONFIDENTIAL | UC tag + mask in Gold |
-| `*employee_id*`, `*emp_id*`, `*staff_id*` | CONFIDENTIAL | UC tag + hash in Gold |
-| `*vendor_name*`, `*supplier_name*` | CONFIDENTIAL | UC tag |
-| `*email*` | CONFIDENTIAL | UC tag + mask |
-| `*phone*`, `*mobile*`, `*tel*` | CONFIDENTIAL | UC tag + mask |
-| `*posted_by*`, `*created_by*`, `*changed_by*` | CONFIDENTIAL | UC tag (user tracking) |
-| `*ip_address*` | CONFIDENTIAL | UC tag |
+| Column Name Pattern | PII Type | Action |
+|--------------------|----------|--------|
+| `*customer_id*`, `*member_id*` | CUSTOMER_ID | UC tag |
+| `*email*` | EMAIL | Tag + mask |
+| `*phone*`, `*mobile*` | PHONE | Tag + mask |
+| `*first_name*`, `*last_name*`, `*full_name*` | NAME | Tag + mask |
+| `*address*`, `*postcode*` | ADDRESS | Tag + mask |
+| `*card_number*`, `*cvv*`, `*account_number*` | PAYMENT | Do not ingest |
 
 ---
 
-## 3. Required Table-Level Properties for Sensitive Data
-
-### If a table contains RESTRICTED data:
+## 3. Table Properties for PII Tables
 
 ```sql
 TBLPROPERTIES (
-  "contains_restricted_data" = "true",
-  "data_sensitivity" = "restricted",
-  "masking_applied" = "true",
-  "engagement.data_classification" = "restricted"
+  "contains_pii" = "true",
+  "pii_types"    = "CUSTOMER_ID,EMAIL"
 )
-COMMENT "[RESTRICTED DATA] <description> — Masking applied per ERP-CDM Sensitive Data Policy v1.0"
-```
-
-### If a table contains CONFIDENTIAL data:
-
-```sql
-TBLPROPERTIES (
-  "contains_confidential_data" = "true",
-  "data_sensitivity" = "confidential",
-  "engagement.data_classification" = "confidential"
-)
-COMMENT "[CONFIDENTIAL] <description> — Column-level tagging applied"
+COMMENT "[CONTAINS PII] <description>"
 ```
 
 ---
 
-## 4. Masking and Tokenisation Patterns
-
-### Tax Identification Numbers
-```sql
--- Show last 4 characters only, mask remainder
-regexp_replace(tin, '.(?=.{4})', 'X') AS tin_masked
-```
-
-### Bank Account Numbers
-```sql
--- Replace with SHA2 token — never expose in analytics layer
-sha2(bank_account_number, 256) AS bank_account_token
-```
-
-### Employee Names
-```sql
--- Gold layer: replace with role/department
-CASE WHEN _data_sensitivity = 'restricted' THEN 'REDACTED'
-     ELSE CONCAT(LEFT(first_name, 1), '. ', last_name)
-END AS employee_display_name
-```
-
-### Monetary Amounts for Senior Executives
-```sql
--- Do not produce row-level records; aggregate only
--- Gold analytical view must use SUM/AVG with minimum group size of 5
-CASE WHEN COUNT(*) OVER (PARTITION BY cost_centre_code) < 5
-     THEN NULL  -- suppress small groups
-     ELSE ROUND(SUM(amount_lc), -3)  -- round to nearest 1000
-END AS payroll_amount_banded
-```
-
----
-
-## 5. Audited Entity Data Isolation
-
-### Rule
-Data from different audited entities MUST be physically isolated into separate schemas. Shared tables are not permitted.
-
-```
-<engagement_id>_bronze   -- One schema per engagement
-<engagement_id>_silver
-<engagement_id>_gold
-```
-
-Sharing data across engagement schemas is a confidentiality breach. Unity Catalog row filters must enforce `engagement_id = current_engagement_id()` on any cross-engagement views.
-
----
-
-## 6. Engagement Data Retention
-
-### Rule
-Pipeline data must not be retained beyond the engagement retention period defined in the engagement letter. Tables must include:
+## 4. Masking Patterns
 
 ```sql
-TBLPROPERTIES (
-  "engagement.retention_date" = "<yyyy-mm-dd>",
-  "engagement.id" = "<engagement_id>",
-  "engagement.audited_entity_id" = "<ae_id>"
-)
+-- Email: show domain only
+regexp_replace(email, '^[^@]+', '***') AS email_masked
+
+-- Name: initial + surname only
+CONCAT(LEFT(first_name, 1), '. ', last_name) AS display_name
+
+-- Phone: last 4 digits only
+regexp_replace(phone, '.(?=.{4})', 'X') AS phone_masked
 ```
-
-At retention date, the entire engagement schema must be dropped. No manual selective deletion is permitted.
-
----
-
-## 7. Access Control Requirements
-
-| Layer | Who Can Access | How |
-|-------|---------------|-----|
-| Bronze | Pipeline service principal only | Unity Catalog grants |
-| Silver (full) | Engagement data lead + QA reviewer | Role-based UC grant |
-| Silver (masked) | All engagement team members | Dynamic view with masking |
-| Gold | All engagement team members | Standard UC grant |
-| Gold (restricted fields) | Data lead only | Column-level masking policy |
 
 ---
 
