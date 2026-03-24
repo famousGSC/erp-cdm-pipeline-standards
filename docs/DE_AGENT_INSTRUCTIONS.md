@@ -14,9 +14,9 @@
 
 | File | Path | Purpose |
 |------|------|---------|
-| **Pipeline Standards** | `standards/erp_cdm_pipeline_standards.md` | Naming, audit columns, DQ rules, layer checklists |
-| **Sensitive Data Policy** | `standards/erp_cdm_sensitive_data_policy.md` | Customer PII, payment data handling |
-| **SDP Template** | `standards/erp_cdm_sdp_template.sql` | Bronze/Silver/Gold code patterns |
+| **Pipeline Standards** | `standards/pipeline_standards.md` | Naming, audit columns, DQ rules, layer checklists |
+| **Sensitive Data Policy** | `standards/sensitive_data_policy.md` | Customer PII, payment data handling |
+| **SDP Template** | `standards/sdp_template.sql` | Bronze/Silver/Gold code patterns |
 
 ---
 
@@ -121,8 +121,8 @@ SELECT transaction_id, amount FROM LIVE.bronze_transactions;
 
 ### If Genie Code Cannot Access GitHub
 Provide the raw URL as fallback:
-- Standards: `https://github.com/famousGSC/erp-cdm-pipeline-standards/blob/main/standards/erp_cdm_pipeline_standards.md`
-- Template: `https://github.com/famousGSC/erp-cdm-pipeline-standards/blob/main/standards/erp_cdm_sdp_template.sql`
+- Standards: `https://github.com/famousGSC/erp-cdm-pipeline-standards/blob/main/standards/pipeline_standards.md`
+- Template: `https://github.com/famousGSC/erp-cdm-pipeline-standards/blob/main/standards/sdp_template.sql`
 
 ### If Agent Ignores Standards
 Be explicit about the most critical requirements:
