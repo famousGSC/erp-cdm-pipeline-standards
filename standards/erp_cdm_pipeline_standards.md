@@ -1,269 +1,256 @@
-# ERP-to-CDM Pipeline Standards
+# Engagement Data Engineering Standards — SDP SQL
 
-> **For AI Agents:** This document contains complete standards for Spark Declarative Pipelines (SDP) used in professional services audit engagements. Apply these rules automatically when creating or reviewing pipeline code that maps ERP extracts to a Common Data Model (CDM). No additional instructions are needed.
+> **For AI Agents:** This document contains complete standards for Spark Declarative Pipelines (SDP) used on data engineering engagements. Apply these rules automatically when creating or reviewing pipeline code. No additional instructions needed.
 
 ---
 
 ## Quick Reference — Checklist by Layer
 
-### Bronze Layer (Raw ERP Extract) — 8 Requirements
+### Bronze Layer Checklist
 | Requirement | How to Apply |
 |-------------|--------------|
-| Table name | `bronze_` + `<erp_source>_` + `lowercase_snake_case` (e.g., `bronze_sap_gl_postings`) |
+| Table name | `bronze_` prefix + `lowercase_snake_case` (e.g., `bronze_transactions`) |
 | Table type | `STREAMING TABLE` for file ingestion, `MATERIALIZED VIEW` for Delta sources |
-| Immutability | No transformations beyond casting to string. Raw data must be preserved exactly. |
-| Audit columns | Add `_source_system`, `_extraction_timestamp`, `_pipeline_run_id`, `_record_hash`, `_loaded_by` as LAST columns |
-| Comment | `COMMENT "Raw <entity> extract from <ERP system> for <audited entity> engagement <engagement_id>"` |
-| Properties | `TBLPROPERTIES ("quality" = "bronze", "engagement.layer" = "raw", "delta.enableChangeDataFeed" = "true")` |
-| Constraints | Use `WHERE` clause only — no CONSTRAINT clauses on Bronze |
+| Audit columns | Add `current_timestamp() AS audit_ts` and `'source_name' AS source_system` as **LAST** columns |
+| Comment | `COMMENT "Raw <entity> data from <source>"` |
+| Properties | `TBLPROPERTIES ("quality" = "bronze", "delta.enableChangeDataFeed" = "true")` |
+| Constraints | `WHERE` clause for NULL filtering only — no CONSTRAINT clauses |
 | Clustering | `CLUSTER BY AUTO` for STREAMING TABLEs |
 
-### Silver Layer (CDM-Mapped Conformed) — 10 Requirements
+### Silver Layer Checklist
 | Requirement | How to Apply |
 |-------------|--------------|
-| Table name | `silver_cdm_` + `lowercase_snake_case` (e.g., `silver_cdm_journal_entry`) |
-| CDM mapping | COMMENT must include source-to-target mapping reference |
-| Audit columns | Same 5 audit columns, plus `_cdm_version` and `_mapping_rule_id` |
-| Comment | `COMMENT "CDM-mapped <entity>. Source: <ERP>.<table>. Mapping: <mapping_doc_ref>"` |
-| Properties | Add `"delta.enableRowTracking" = "true"` and `"engagement.layer" = "conformed"` |
-| Constraints | CONSTRAINT clauses required for all CDM mandatory fields |
-| Type coercion | All amounts must be CAST to DECIMAL(18,2), all dates to DATE |
-| Null policy | CDM mandatory fields must use `ON VIOLATION FAIL UPDATE`; optional fields use `ON VIOLATION DROP ROW` |
-| DQ flag | Every Silver table must include a `_data_quality_flag` column |
-| Reconciliation | Row count and sum control totals must be persisted to `<schema>.reconciliation_log` |
+| Table name | `silver_` prefix + `lowercase_snake_case` (e.g., `silver_transactions`) |
+| Table type | `STREAMING TABLE` or `MATERIALIZED VIEW` |
+| Audit columns | `audit_ts` and `source_system` as **LAST** columns |
+| Comment | `COMMENT "Cleaned and validated <entity> with derived metrics"` |
+| Properties | Add `"delta.enableRowTracking" = "true"` |
+| Constraints | `CONSTRAINT` clauses with `ON VIOLATION FAIL UPDATE` (critical) or `ON VIOLATION DROP ROW` (non-critical) |
+| Transformations | Apply `TRIM()`, `CAST()`, `INITCAP()`, add derived fields |
+| Data quality flag | `data_quality_flag` column using CASE expression |
 
-### Gold Layer (Audit Analysis) — 8 Requirements
+### Gold Layer Checklist
 | Requirement | How to Apply |
 |-------------|--------------|
-| Table name | `gold_` + `lowercase_snake_case` (e.g., `gold_journal_entry_testing`) |
-| Audit columns | Same 5 base audit columns |
-| Comment | `COMMENT "Analytical view for <audit procedure> — <audited entity> engagement"` |
-| Properties | `TBLPROPERTIES ("quality" = "gold", "engagement.layer" = "analytical")` |
-| Aggregations | `ROUND()` for all monetary amounts (2dp), `NULLIF()` for division, `COALESCE()` for NULLs |
-| Joins | Explicit `INNER JOIN` / `LEFT JOIN` with `LIVE.` prefix for pipeline tables |
-| No PII | Gold tables must not contain raw PII; use aggregated or masked values only |
+| Table name | `gold_` prefix + `lowercase_snake_case` (e.g., `gold_daily_sales`) |
+| Table type | `STREAMING TABLE` or `MATERIALIZED VIEW` |
+| Audit columns | `audit_ts` and `source_system` as **LAST** columns |
+| Comment | `COMMENT "Business aggregation for <use case>"` |
+| Properties | `TBLPROPERTIES ("quality" = "gold", "delta.enableChangeDataFeed" = "true")` |
+| Aggregations | `ROUND()` for financials, `NULLIF()` for division, `COALESCE()` for NULLs |
+| Joins | `INNER JOIN` or `LEFT JOIN` with `LIVE.table_name` |
 | Clustering | `CLUSTER BY AUTO` for STREAMING TABLEs |
 
 ---
 
 ## 1. Table Naming Convention
 
-### Rule
-All tables must use `lowercase_snake_case` with layer prefix and (for Bronze) ERP source identifier.
+All table names MUST use `lowercase_snake_case` with the appropriate layer prefix.
 
-| Layer | Pattern | Example |
-|-------|---------|---------|
-| Bronze | `bronze_<erp>_<entity>` | `bronze_sap_gl_postings`, `bronze_oracle_ap_invoices` |
-| Silver | `silver_cdm_<entity>` | `silver_cdm_journal_entry`, `silver_cdm_vendor` |
-| Gold | `gold_<procedure>` | `gold_journal_entry_testing`, `gold_three_way_match` |
+| Layer | Prefix | Example |
+|-------|--------|---------|
+| Bronze | `bronze_` | `bronze_transactions` |
+| Silver | `silver_` | `silver_products` |
+| Gold | `gold_` | `gold_daily_sales_summary` |
 
-### Valid ERP Source Identifiers
-`sap`, `oracle`, `dynamics`, `netsuite`, `sage`, `epicor`, `ifs`
-
-### Invalid Examples
-- `GL_POSTINGS` — uppercase
-- `bronze-sap-gl` — kebab-case
-- `RawGLPostings` — PascalCase
-- `bronze_client_gl` — never use "client"; use audited entity ID or system name
+**Valid:** `bronze_transactions`, `silver_products`, `gold_category_performance`
+**Invalid:** `RawTransactions`, `SILVER_PRODUCTS`, `transactions` (no prefix), `gold-sales` (kebab-case)
 
 ---
 
-## 2. Mandatory Audit Trail Columns
+## 2. Required Audit Columns
 
-### Rule
-Every table at every layer MUST include these columns as the **LAST** columns in the SELECT statement. These are non-negotiable for audit evidence.
+Every table MUST include these two columns as the **LAST** columns in the SELECT:
 
-| Column | Type | Description | Required At |
-|--------|------|-------------|-------------|
-| `_source_system` | STRING | ERP system identifier (e.g., `sap_ecc`, `oracle_ebs`) | All layers |
-| `_extraction_timestamp` | TIMESTAMP | When the record was extracted from source | All layers |
-| `_pipeline_run_id` | STRING | Databricks pipeline run ID — `current_user()` + run context | All layers |
-| `_record_hash` | STRING | SHA2 hash of key business fields for change detection | All layers |
-| `_loaded_by` | STRING | Service principal or user who ran the pipeline | All layers |
-| `_cdm_version` | STRING | Version of the CDM mapping rules applied | Silver only |
-| `_mapping_rule_id` | STRING | Identifier of the source-to-target mapping rule | Silver only |
-
-### Implementation Pattern
+| Column | Type | Description |
+|--------|------|-------------|
+| `audit_ts` | TIMESTAMP | When the record was processed by the pipeline |
+| `source_system` | STRING | Origin system identifier |
 
 ```sql
 SELECT
   -- ... all business columns first ...
 
-  -- Audit trail columns LAST (mandatory)
-  '<erp_system>' AS _source_system,
-  current_timestamp() AS _extraction_timestamp,
-  concat(current_user(), '_', monotonically_increasing_id()) AS _pipeline_run_id,
-  sha2(concat_ws('|', <key_cols>), 256) AS _record_hash,
-  current_user() AS _loaded_by
+  -- Audit columns LAST
+  current_timestamp() AS audit_ts,
+  'source_system_name'  AS source_system
 FROM source_table;
 ```
 
----
+### `source_system` Values by Layer
 
-## 3. CDM Mandatory Fields
-
-### Rule
-Every Silver table mapping to CDM must include the following engagement context fields immediately after the business key:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `engagement_id` | STRING | Unique engagement identifier — must never be NULL |
-| `audited_entity_id` | STRING | Identifier for the audited entity — never use free-text entity name in data |
-| `financial_year` | INT | Fiscal year of the record |
-| `fiscal_period` | INT | Fiscal period (1–16 for SAP, 1–12 for standard) |
-| `functional_currency` | STRING(3) | ISO 4217 currency code of the audited entity's functional currency |
-
-### ERP Source Fields to Always Preserve
-The following source fields must be preserved at Bronze and passed through to Silver:
-
-| ERP Concept | SAP Field | Oracle Field | CDM Column |
-|-------------|-----------|--------------|------------|
-| Document number | `BELNR` | `JE_HEADER_ID` | `source_document_number` |
-| Posting date | `BUDAT` | `ACCOUNTING_DATE` | `posting_date` |
-| Company code | `BUKRS` | `LEDGER_ID` | `company_code` |
-| GL account | `HKONT` | `CODE_COMBINATION_ID` | `gl_account_code` |
-| Amount in local currency | `DMBTR` | `ACCOUNTED_DR/CR` | `amount_lc` |
-| Amount in document currency | `WRBTR` | `ENTERED_DR/CR` | `amount_dc` |
-| Debit/Credit indicator | `SHKZG` | (sign of amount) | `debit_credit_indicator` |
-| Cost centre | `KOSTL` | `COST_CENTER_ID` | `cost_centre_code` |
-| Profit centre | `PRCTR` | `SEGMENT_ID` | `profit_centre_code` |
-| Posting user | `USNAM` | `CREATED_BY` | `posted_by` |
+| Layer | Value | Example Source |
+|-------|-------|---------------|
+| Bronze | `pos`, `ecommerce`, `product_catalog`, `inventory` | Point of sale, web, catalog system |
+| Silver | `silver_transformation` | Silver processing layer |
+| Gold | `gold_aggregation` | Gold aggregation layer |
 
 ---
 
-## 4. Data Quality Standards
+## 3. SDP Table Types
 
-### Rule
-Apply DQ checks at Silver layer only. Bronze preserves raw data exactly.
+| Type | When to Use |
+|------|-------------|
+| `STREAMING TABLE` | File ingestion (CSV/Parquet), CDC, append-only sources |
+| `MATERIALIZED VIEW` | Existing Delta tables, aggregations, joins |
+| `LIVE.table_name` | Referencing tables within the same pipeline |
 
-### Constraint Severity
+---
 
-| Severity | Action | When to Use |
-|----------|--------|-------------|
-| CRITICAL | `ON VIOLATION FAIL UPDATE` | CDM mandatory fields, primary keys, amounts |
-| NON-CRITICAL | `ON VIOLATION DROP ROW` | Optional enrichment fields, reference data lookups |
+## 4. Data Quality Constraints
 
-### Mandatory Silver DQ Constraints
+**Bronze:** `WHERE` clause only — preserve raw data.
+**Silver:** `CONSTRAINT` clauses with explicit violation handling.
+**Gold:** No constraints — data already validated upstream.
+
+| Action | Use Case |
+|--------|----------|
+| `ON VIOLATION DROP ROW` | Non-critical — silently filter bad rows |
+| `ON VIOLATION FAIL UPDATE` | Critical — halt pipeline on failure |
 
 ```sql
-CONSTRAINT valid_engagement_id EXPECT (engagement_id IS NOT NULL) ON VIOLATION FAIL UPDATE,
-CONSTRAINT valid_audited_entity EXPECT (audited_entity_id IS NOT NULL) ON VIOLATION FAIL UPDATE,
-CONSTRAINT valid_document_number EXPECT (source_document_number IS NOT NULL) ON VIOLATION FAIL UPDATE,
-CONSTRAINT valid_posting_date EXPECT (posting_date IS NOT NULL AND posting_date >= '1990-01-01') ON VIOLATION FAIL UPDATE,
-CONSTRAINT valid_amount EXPECT (amount_lc IS NOT NULL) ON VIOLATION FAIL UPDATE,
-CONSTRAINT valid_currency EXPECT (length(functional_currency) = 3) ON VIOLATION DROP ROW,
-CONSTRAINT valid_dc_indicator EXPECT (debit_credit_indicator IN ('D', 'C', 'H', 'S')) ON VIOLATION DROP ROW
+-- Silver DQ example
+CREATE OR REFRESH MATERIALIZED VIEW silver_transactions (
+  CONSTRAINT valid_id     EXPECT (transaction_id IS NOT NULL) ON VIOLATION FAIL UPDATE,
+  CONSTRAINT valid_amount EXPECT (amount >= 0)                ON VIOLATION DROP ROW
+)
 ```
-
-### Data Quality Flag Values
-
-| Flag | Meaning |
-|------|---------|
-| `CLEAN` | All checks passed |
-| `MISSING_AMOUNT` | Amount field is NULL |
-| `INVALID_DATE` | Posting date out of expected range |
-| `CURRENCY_MISMATCH` | Document currency differs from expected |
-| `UNKNOWN_ACCOUNT` | GL account not found in chart of accounts |
-| `DUPLICATE_DOCUMENT` | Duplicate document number detected |
-| `PERIOD_MISMATCH` | Posting date does not match stated fiscal period |
 
 ---
 
-## 5. Reconciliation Requirements
+## 5. Table Properties
 
-### Rule
-Every Silver pipeline run must write control totals to `<schema>.reconciliation_log`. This is mandatory evidence for ISAE 3402 reporting.
+| Layer | Required TBLPROPERTIES |
+|-------|------------------------|
+| Bronze | `"quality" = "bronze"`, `"delta.enableChangeDataFeed" = "true"` |
+| Silver | `"quality" = "silver"`, `"delta.enableChangeDataFeed" = "true"`, `"delta.enableRowTracking" = "true"` |
+| Gold | `"quality" = "gold"`, `"delta.enableChangeDataFeed" = "true"` |
 
-### Reconciliation Log Schema
+---
 
+## 6. Comments
+
+Every table MUST have a `COMMENT`:
+
+| Layer | Template |
+|-------|----------|
+| Bronze | `COMMENT "Raw <entity> data from <source system>"` |
+| Silver | `COMMENT "Cleaned and validated <entity> with derived metrics"` |
+| Gold | `COMMENT "<Business metric/aggregation> for <use case>"` |
+
+---
+
+## 7. Complete Layer Patterns
+
+### Bronze — STREAMING TABLE (file ingestion)
 ```sql
-CREATE TABLE IF NOT EXISTS reconciliation_log (
-  run_id          STRING,
-  pipeline_name   STRING,
-  layer           STRING,
-  table_name      STRING,
-  source_count    BIGINT,
-  target_count    BIGINT,
-  sum_amount_lc   DECIMAL(18,2),
-  reconciled_at   TIMESTAMP,
-  reconciled_by   STRING,
-  status          STRING  -- 'PASS', 'BREAK', 'PENDING_REVIEW'
-);
+CREATE OR REFRESH STREAMING TABLE bronze_transactions
+CLUSTER BY AUTO
+COMMENT "Raw sales transactions from POS systems"
+TBLPROPERTIES ("quality" = "bronze", "delta.enableChangeDataFeed" = "true")
+AS SELECT
+  *,
+  current_timestamp() AS audit_ts,
+  'pos'               AS source_system
+FROM STREAM read_files(
+  '${volume_path}/transactions/*.csv',
+  format => 'csv', header => true
+)
+WHERE transaction_id IS NOT NULL;
 ```
 
-### Break Tolerance Policy
-| Amount Range | Tolerance |
-|-------------|-----------|
-| < 10,000 functional currency | Zero tolerance — every unit must reconcile |
-| 10,000 – 1,000,000 | 0.01% of total |
-| > 1,000,000 | Must be reviewed and signed off by engagement manager |
+### Bronze — MATERIALIZED VIEW (Delta source)
+```sql
+CREATE OR REFRESH MATERIALIZED VIEW bronze_products
+COMMENT "Raw product catalog from master data system"
+TBLPROPERTIES ("quality" = "bronze", "delta.enableChangeDataFeed" = "true")
+AS SELECT
+  *,
+  current_timestamp() AS audit_ts,
+  'product_catalog'   AS source_system
+FROM ${catalog}.${schema}.raw_products
+WHERE product_id IS NOT NULL;
+```
+
+### Silver — full validation with derived fields
+```sql
+CREATE OR REFRESH MATERIALIZED VIEW silver_transactions (
+  CONSTRAINT valid_id       EXPECT (transaction_id IS NOT NULL)       ON VIOLATION FAIL UPDATE,
+  CONSTRAINT valid_product  EXPECT (product_id IS NOT NULL)            ON VIOLATION FAIL UPDATE,
+  CONSTRAINT valid_quantity EXPECT (quantity > 0)                      ON VIOLATION DROP ROW,
+  CONSTRAINT valid_amount   EXPECT (amount >= 0)                       ON VIOLATION DROP ROW
+)
+COMMENT "Cleaned and validated sales transactions with net amount and data quality flag"
+TBLPROPERTIES (
+  "quality"                    = "silver",
+  "delta.enableChangeDataFeed" = "true",
+  "delta.enableRowTracking"    = "true"
+)
+AS SELECT
+  TRIM(transaction_id)           AS transaction_id,
+  TRIM(product_id)               AS product_id,
+  CAST(quantity   AS INT)        AS quantity,
+  CAST(amount     AS DOUBLE)     AS amount,
+  CAST(discount   AS DOUBLE)     AS discount,
+  ROUND(amount - COALESCE(discount, 0), 2)  AS net_amount,
+  CASE
+    WHEN quantity IS NULL THEN 'MISSING_QUANTITY'
+    WHEN amount   < 0     THEN 'NEGATIVE_AMOUNT'
+    ELSE 'CLEAN'
+  END                            AS data_quality_flag,
+  current_timestamp()            AS audit_ts,
+  'silver_transformation'        AS source_system
+FROM LIVE.bronze_transactions;
+```
+
+### Gold — business aggregation
+```sql
+CREATE OR REFRESH MATERIALIZED VIEW gold_daily_sales_summary
+COMMENT "Daily sales KPIs by store and category for retail analytics"
+TBLPROPERTIES ("quality" = "gold", "delta.enableChangeDataFeed" = "true")
+AS SELECT
+  t.sale_date,
+  s.store_name,
+  s.region,
+  p.category,
+  COUNT(DISTINCT t.transaction_id)       AS transaction_count,
+  SUM(t.quantity)                         AS units_sold,
+  ROUND(SUM(t.net_amount), 2)            AS net_revenue,
+  ROUND(AVG(t.net_amount), 2)            AS avg_basket_value,
+  ROUND(SUM(t.net_amount) / NULLIF(COUNT(DISTINCT t.transaction_id), 0), 2) AS revenue_per_transaction,
+  current_timestamp()                    AS audit_ts,
+  'gold_aggregation'                     AS source_system
+FROM LIVE.silver_transactions t
+INNER JOIN LIVE.silver_stores   s ON t.store_id   = s.store_id
+INNER JOIN LIVE.silver_products p ON t.product_id = p.product_id
+GROUP BY t.sale_date, s.store_name, s.region, p.category;
+```
 
 ---
 
-## 6. Naming Convention for Non-Table Objects
-
-| Object | Convention | Example |
-|--------|-----------|---------|
-| Schema | `<engagement_id>_<layer>` | `eng001_bronze`, `eng001_silver` |
-| Pipeline | `<engagement_id>_erp_cdm_etl` | `eng001_erp_cdm_etl` |
-| Volume (raw files) | `<engagement_id>_raw_extracts` | `eng001_raw_extracts` |
-| Function | `fn_<purpose>` | `fn_hash_record`, `fn_parse_sap_date` |
-| Reconciliation table | `reconciliation_log` (one per schema) | `eng001_silver.reconciliation_log` |
-
----
-
-## 7. SDP Table Type Selection
-
-| Scenario | Table Type |
-|----------|------------|
-| CSV/Parquet files from ERP extract | `STREAMING TABLE` |
-| Reading from existing Delta staging tables | `MATERIALIZED VIEW` |
-| CDC from ERP change tables | `STREAMING TABLE` with `AUTO CDC` |
-| CDM-mapped output (batch) | `MATERIALIZED VIEW` |
-| Aggregated audit analytical views | `MATERIALIZED VIEW` |
-| Incremental journal testing (append-only) | `STREAMING TABLE` |
-
----
-
-## 8. SQL Formatting Standards
+## 8. SQL Formatting
 
 | Element | Convention |
 |---------|-----------|
-| SQL keywords | UPPERCASE |
-| Table/column names | `lowercase_snake_case` |
-| Column aliases | Always explicit — no positional references |
-| Monetary amounts | `CAST AS DECIMAL(18,2)` or `ROUND(..., 2)` |
-| Dates | `CAST AS DATE` at Silver layer |
-| String trimming | `TRIM()` on all string fields at Silver |
-| Column order | Keys → Engagement context → Business fields → Derived fields → DQ flag → Audit trail |
+| Keywords | UPPERCASE (`SELECT`, `FROM`, `WHERE`, `AS`) |
+| Names | `lowercase_snake_case` |
+| Financials | `ROUND(expr, 2)` |
+| Division | `NULLIF(denominator, 0)` to prevent divide-by-zero |
+| NULLs | `COALESCE(col, default)` |
+| Column order | Keys → Dimensions → Measures → Derived fields → DQ flag → **Audit columns last** |
 
 ---
 
-## 9. Immutability Rule
+## 9. Joins and References
 
-### Rule
-Bronze tables must NEVER be updated or deleted after initial load. They are the authoritative record of what was extracted from the source system.
+```sql
+-- Pipeline tables: use LIVE. prefix
+FROM LIVE.silver_transactions t
+INNER JOIN LIVE.silver_products p ON t.product_id = p.product_id
 
-- No `DELETE` or `UPDATE` operations on Bronze tables
-- Re-runs must append with a new `_pipeline_run_id` or use `CREATE OR REFRESH` (which replaces)
-- If source data is corrected, the correction must appear as a new record at Bronze, not an overwrite
-
----
-
-## 10. Prohibited Patterns
-
-The following are NOT permitted in any pipeline on an audit engagement:
-
-| Prohibited | Reason |
-|-----------|--------|
-| Using "client" in column names, comments, or table names | Use "audited_entity" or engagement ID |
-| Free-text entity name in data columns | Use `audited_entity_id` (surrogate key) |
-| Hardcoded credentials or connection strings | Always use Unity Catalog secrets |
-| Silent failure (no dead-letter table) | All rejected records must be logged |
-| `SELECT *` at Silver or Gold layer | Explicit column list required for CDM mapping |
-| In-place updates to Bronze | Bronze is immutable |
-| Logging PII to pipeline logs or comments | Mask or tokenise before logging |
-| Unversioned CDM mappings | `_cdm_version` column is mandatory |
+-- External tables: fully qualified name
+FROM lh_vm_stable.advisory_demo.raw_transactions
+```
 
 ---
 
@@ -271,4 +258,4 @@ The following are NOT permitted in any pipeline on an audit engagement:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0 | 2026-03-24 | Initial release — ERP-to-CDM audit engagement standards |
+| 1.0 | 2026-03-24 | Initial release — retail advisory engagement standards |
