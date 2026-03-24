@@ -1,32 +1,38 @@
-# ERP-to-CDM Pipeline Standards
+# Retail Advisory Pipeline Standards
 
-Enterprise pipeline standards for professional services firms mapping ERP system extracts to a Common Data Model (CDM).
+Data engineering pipeline standards for advisory engagements working with UK retail data. These standards ensure consistent, auditable, and maintainable Spark Declarative Pipelines (SDP) across all engagement teams.
 
 ## Scope
 
-These standards apply to all data engineering pipelines built during audit and advisory engagements where source data is extracted from ERP systems (SAP, Oracle EBS, Microsoft Dynamics, NetSuite, etc.) and loaded into a standardised Common Data Model for downstream analysis, control testing, or reporting.
+These standards apply to all Bronze/Silver/Gold pipelines built on Databricks using the Spark Declarative Pipelines framework. They cover naming conventions, audit columns, data quality constraints, table properties, and SQL formatting.
 
 ## Audience
 
-- Data engineers and pipeline developers on audit and advisory engagements
-- Engagement managers responsible for data workstream sign-off
-- Quality reviewers performing technical review of pipeline code
-
-## Terminology
-
-| Term | Definition |
-|------|-----------|
-| **Audited Entity** | The organisation whose financial data is being processed. Never referred to as "client" in pipeline code, comments, or logs. |
-| **CDM** | Common Data Model — the target schema used across engagements for standardised analysis |
-| **ERP** | Enterprise Resource Planning system — the source of financial transaction data |
-| **Bronze** | Raw ingestion layer — exact copy of source, immutable after load |
-| **Silver** | Conformed layer — CDM-mapped, quality-checked, audit-trailed |
-| **Gold** | Analytical layer — aggregated outputs for engagement analysis and reporting |
+- Data engineers building pipelines for retail analytics engagements
+- Technical leads reviewing pipeline code before deployment
+- AI agents (Genie Code) generating pipeline code in Pipeline Authoring mode
 
 ## Standards Files
 
 | File | Purpose |
 |------|---------|
-| [erp_cdm_pipeline_standards.md](standards/erp_cdm_pipeline_standards.md) | Main coding standards: naming, audit columns, DQ, CDM mapping |
-| [erp_cdm_sensitive_data_policy.md](standards/erp_cdm_sensitive_data_policy.md) | Sensitive financial data handling and access control |
-| [erp_cdm_sdp_template.sql](standards/erp_cdm_sdp_template.sql) | SDP SQL templates for Bronze/Silver/Gold ERP pipelines |
+| [pipeline_standards.md](standards/pipeline_standards.md) | Main coding standards: naming, audit columns, DQ constraints, layer checklists |
+| [sensitive_data_policy.md](standards/sensitive_data_policy.md) | Customer PII handling and masking patterns |
+| [sdp_template.sql](standards/sdp_template.sql) | Ready-to-use Bronze/Silver/Gold SDP SQL templates |
+
+## Demo Usage Docs
+
+| File | Purpose |
+|------|---------|
+| [DE_AGENT_INSTRUCTIONS.md](docs/DE_AGENT_INSTRUCTIONS.md) | Copy-paste prompts for Genie Code in Pipeline Authoring mode |
+| [DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) | 20-minute demo walkthrough script |
+
+## Key Principles
+
+| Layer | Purpose |
+|-------|---------|
+| **Bronze** | Raw ingestion — exact copy of source, `WHERE` filter on primary key only |
+| **Silver** | Validated and transformed — DQ constraints, derived fields, `data_quality_flag` |
+| **Gold** | Business aggregations — joins across silver tables, `WHERE data_quality_flag = 'CLEAN'` |
+
+Every table requires two audit columns as the **last** columns: `audit_ts` and `source_system`.
